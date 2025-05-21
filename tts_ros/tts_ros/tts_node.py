@@ -22,16 +22,18 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-
-import os
 import wave
 import pyaudio
 import tempfile
 import threading
 import collections
 import numpy as np
-from TTS.api import TTS as TtsModel
-
+import torch
+import torchaudio
+from TTS.tts.models.xtts import Xtts
+from TTS.tts.configs.xtts_config import XttsConfig
+from ament_index_python.packages import get_package_share_directory
+from pathlib import Path
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -40,10 +42,9 @@ from rclpy.action.server import ServerGoalHandle
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 
-from audio_common_msgs.msg import AudioStamped
-from audio_common_msgs.action import TTS
-from tts_ros.utils import data_to_msg
-from tts_ros.utils import get_msg_chunk
+from audio_tts_msgs.msg import AudioStamped
+from audio_tts_msgs.action import TTS
+from tts_ros.utils import data_to_msg, get_msg_chunk
 
 
 class TtsNode(Node):
@@ -51,6 +52,7 @@ class TtsNode(Node):
     def __init__(self) -> None:
         super().__init__("tts_node")
 
+        # Declare parameters with defaults
         self.declare_parameters(
             "",
             [
@@ -73,50 +75,60 @@ class TtsNode(Node):
 
         model = self.get_parameter("model").get_parameter_value().string_value
         model_path = self.get_parameter("model_path").get_parameter_value().string_value
-        config_path = self.get_parameter("config_path").get_parameter_value().string_value
-        vocoder_path = (
-            self.get_parameter("vocoder_path").get_parameter_value().string_value
-        )
-        vocoder_config_path = (
-            self.get_parameter("vocoder_config_path").get_parameter_value().string_value
-        )
+        config_path_param = self.get_parameter("config_path").get_parameter_value().string_value
+        vocoder_path = self.get_parameter("vocoder_path").get_parameter_value().string_value
+        vocoder_config_path = self.get_parameter("vocoder_config_path").get_parameter_value().string_value
 
-        self.speaker_wav = (
-            self.get_parameter("speaker_wav").get_parameter_value().string_value
-        )
+        self.speaker_wav = self.get_parameter("speaker_wav").get_parameter_value().string_value
         self.speaker = self.get_parameter("speaker").get_parameter_value().string_value
         self.device = self.get_parameter("device").get_parameter_value().string_value
         self.stream = self.get_parameter("stream").get_parameter_value().bool_value
 
-        self.tts = TtsModel(
-            model_name=model,
-            model_path=model_path,
-            config_path=config_path,
-            vocoder_path=vocoder_path,
-            vocoder_config_path=vocoder_config_path,
-        ).to(self.device)
+        # Load model files from package share directory + config folder
+        model_dir = Path(get_package_share_directory("tts_ros")) / "config"
+        checkpoint_path = model_dir / "model.pth"
+        vocab_path = model_dir / "vocab.json"
+        speakers_path = model_dir / "speakers_xtts.pth"
+        config_path = model_dir / "config.json"
 
-        if not self.speaker_wav or not (
-            os.path.exists(self.speaker_wav) and os.path.isfile(self.speaker_wav)
-        ):
+        self.get_logger().info("Loading XTTS model...")
+        config = XttsConfig()
+        config.load_json(str(config_path))
+
+        self.tts = Xtts.init_from_config(config)
+        self.tts.load_checkpoint(
+            config,
+            checkpoint_path=str(checkpoint_path),
+            vocab_path=str(vocab_path),
+            speaker_file_path=str(speakers_path),
+            use_deepspeed=False,
+        )
+
+        # Set device
+        if self.device == "cuda":
+            self.tts.cuda()
+        else:
+            self.tts.cpu()
+
+        # Validate speaker WAV path if provided
+        if not self.speaker_wav or not (Path(self.speaker_wav).exists() and Path(self.speaker_wav).is_file()):
             self.speaker_wav = None
 
-        if not self.speaker or not self.tts.is_multi_speaker:
-            self.speaker = None
+        # Validate speaker param for multi-speaker model
+        #if not self.speaker or not self.tts.is_multi_speaker:
+        #    self.speaker = None
 
-        # goal queue
+        # Goal queue for handling action server requests
         self._goal_queue = collections.deque()
         self._goal_queue_lock = threading.Lock()
         self._current_goal = None
 
-        # publish audio data
+        # Publisher for audio output
         self._pub_rate = None
         self._pub_lock = threading.Lock()
-        self.__player_pub = self.create_publisher(
-            AudioStamped, "audio", qos_profile_sensor_data
-        )
+        self.__player_pub = self.create_publisher(AudioStamped, "audio", qos_profile_sensor_data)
 
-        # action server
+        # Action server setup
         self._action_server = ActionServer(
             self,
             TTS,
@@ -128,25 +140,18 @@ class TtsNode(Node):
             callback_group=ReentrantCallbackGroup(),
         )
 
-        self.get_logger().debug(f"Stream: {self.stream} {self.speaker_wav}")
+        self.get_logger().debug(f"Stream: {self.stream} Speaker WAV: {self.speaker_wav}")
 
-        if self.stream and self.speaker_wav:
-            self.get_logger().info(
-                f"Streaming. Getting embeddings from {self.speaker_wav}"
-            )
-            self.gpt_cond_latent, self.speaker_embedding = (
-                self.tts.synthesizer.tts_model.get_conditioning_latents(
-                    audio_path=[self.speaker_wav]
-                )
-            )
-        else:
-            self.stream = False
-
+        self.gpt_cond_latent, self.speaker_embedding = self.tts.get_conditioning_latents(
+                audio_path=[self.speaker_wav]
+        )
+        self.get_logger().info("got embeeddings")
+        
         self.get_logger().info("TTS node started")
 
     def destroy_node(self) -> bool:
         self._action_server.destroy()
-        super().destroy_node()
+        return super().destroy_node()
 
     def goal_callback(self, goal_request: ServerGoalHandle) -> int:
         return GoalResponse.ACCEPT
@@ -163,58 +168,63 @@ class TtsNode(Node):
         return CancelResponse.ACCEPT
 
     def execute_callback(self, goal_handle: ServerGoalHandle) -> TTS.Result:
-
         request: TTS.Goal = goal_handle.request
         text = request.text
         language = request.language
 
-        # check text
         if not text.strip():
             goal_handle.succeed()
             return TTS.Result()
 
-        # Stream values, might be specific to the model?
         audio_format = pyaudio.paInt16
         channels = 1
         rate = 24000
 
-        if not self.tts.is_multi_lingual:
-            language = None
+        #if not self.tts.is_multilingual:
+        #    language = None
 
-        # generate the audio from text
         self.get_logger().info("Generating Audio")
 
         try:
             if not self.stream:
-                # create an audio file
-                audio_file = tempfile.NamedTemporaryFile(mode="w+")
-                self.tts.tts_to_file(
+                out = self.tts.inference(
                     text,
-                    speaker_wav=self.speaker_wav,
-                    speaker=self.speaker,
-                    language=language,
-                    file_path=audio_file.name,
+                    language,
+                    self.gpt_cond_latent,
+                    self.speaker_embedding,
+                    temperature=0.7,
                 )
+                wav = torch.tensor(out["wav"]).unsqueeze(0)
+                data = wav.numpy().flatten()
+                data = np.clip(data, -1, 1)
+                data = (data * 32767).astype(np.int16)
 
-                # read audio chunks
-                audio_file.seek(0)
-                wf = wave.open(audio_file.name, "rb")
-                audio_file.close()
+                # Create and publish full audio message at once
+                audio_msg = data_to_msg(data, audio_format)
+                if audio_msg is None:
+                    self.get_logger().error(f"Format {audio_format} unknown")
+                    goal_handle.abort()
+                    self.run_next_goal()
+                    return TTS.Result()
 
-                audio_format = pyaudio.get_format_from_width(wf.getsampwidth())
-                channels = wf.getnchannels()
-                rate = wf.getframerate()
+                msg = AudioStamped()
+                msg.header.frame_id = self.frame_id
+                msg.header.stamp = self.get_clock().now().to_msg()
+                msg.audio = audio_msg
+                msg.audio.info.channels = channels
+                msg.audio.info.chunk = get_msg_chunk(audio_msg)
+                msg.audio.info.rate = rate
 
-                def read_wav_chunks():
-                    while True:
-                        frames = wf.readframes(self.chunk)
-                        if not frames:
-                            break
-                        yield frames
+                with self._pub_lock:
+                    self.__player_pub.publish(msg)
 
-                chunks = read_wav_chunks()
+                goal_handle.publish_feedback(TTS.Feedback(audio=msg))
+                goal_handle.succeed()
+                self.run_next_goal()
+                return TTS.Result()
 
             else:
+                # streaming mode (keep as-is)
                 chunks = self.tts.synthesizer.tts_model.inference_stream(
                     text,
                     language,
@@ -228,7 +238,7 @@ class TtsNode(Node):
             self.run_next_goal()
             return TTS.Result()
 
-        # pub audio chunks
+
         with self._pub_lock:
             self.run_next_goal()
 
@@ -238,7 +248,7 @@ class TtsNode(Node):
             if self._pub_rate is None:
                 self._pub_rate = self.create_rate(frequency)
 
-            for _, chunk_data in enumerate(chunks):
+            for chunk_data in chunks:
                 for j in range(0, len(chunk_data), self.chunk):
 
                     if self.stream:
@@ -247,14 +257,13 @@ class TtsNode(Node):
                         data = data[None, : int(data.shape[0])]
                         data = np.clip(data, -1, 1)
                         data = (data * 32767).astype(np.int16)
-
                     else:
                         data = chunk_data
 
                     audio_msg = data_to_msg(data, audio_format)
                     if audio_msg is None:
                         self.get_logger().error(f"Format {audio_format} unknown")
-                        self._goal_handle.abort()
+                        goal_handle.abort()
                         return TTS.Result()
 
                     msg = AudioStamped()
@@ -295,7 +304,6 @@ class TtsNode(Node):
                 t = threading.Thread(target=self._current_goal.execute)
                 t.start()
                 return True
-
             except IndexError:
                 self._current_goal = None
                 return False

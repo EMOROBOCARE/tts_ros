@@ -22,7 +22,7 @@
 
 import pyaudio
 import numpy as np
-from audio_common_msgs.msg import Audio
+from audio_tts_msgs.msg import Audio
 
 pyaudio_to_np = {
     pyaudio.paFloat32: np.float32,
