@@ -45,7 +45,8 @@ from rclpy.executors import MultiThreadedExecutor
 from audio_tts_msgs.msg import AudioStamped
 from audio_tts_msgs.action import TTS
 from tts_ros.utils import data_to_msg, get_msg_chunk
-
+from std_msgs.msg import Bool
+import time
 
 class TtsNode(Node):
 
@@ -69,7 +70,7 @@ class TtsNode(Node):
                 ("stream", False),
             ],
         )
-
+        self.robot_speaks = False
         self.chunk = self.get_parameter("chunk").get_parameter_value().integer_value
         self.frame_id = self.get_parameter("frame_id").get_parameter_value().string_value
 
@@ -126,8 +127,9 @@ class TtsNode(Node):
         # Publisher for audio output
         self._pub_rate = None
         self._pub_lock = threading.Lock()
-        self.__player_pub = self.create_publisher(AudioStamped, "audio", qos_profile_sensor_data)
-
+        self.__player_pub = self.create_publisher(AudioStamped, "/tts/audio", qos_profile_sensor_data)
+        self.voice_detected_sub = self.create_subscription(
+            Bool, "/robot_speaking", self.on_robot_speaking, 1)
         # Action server setup
         self._action_server = ActionServer(
             self,
@@ -148,6 +150,20 @@ class TtsNode(Node):
         self.get_logger().info("got embeeddings")
         
         self.get_logger().info("TTS node started")
+
+    def wait_for_audio_playback(self, timeout_sec=10.0) -> bool:
+        """Waits for the robot_speaks flag to become False with a timeout."""
+        start_time = time.time()
+        while self.robot_speaks:
+            if time.time() - start_time > timeout_sec:
+                self.get_logger().warn("Timeout waiting for audio playback to finish.")
+                return False
+            time.sleep(0.1)
+        return True
+
+    def on_robot_speaking(self, msg):
+
+        self.robot_speaks= msg.data
 
     def destroy_node(self) -> bool:
         self._action_server.destroy()
@@ -217,11 +233,19 @@ class TtsNode(Node):
 
                 with self._pub_lock:
                     self.__player_pub.publish(msg)
+                    self.get_logger().info("published audio")
+                    self.robot_speaks = True #or can be subscribed from topic
 
-                goal_handle.publish_feedback(TTS.Feedback(audio=msg))
-                goal_handle.succeed()
-                self.run_next_goal()
-                return TTS.Result()
+                    goal_handle.publish_feedback(TTS.Feedback(audio=msg))
+                    if not self.wait_for_audio_playback(timeout_sec=50.0):
+                        goal_handle.abort()
+                        self.get_logger().error("Audio was not played (timeout).")
+                    else:
+                        goal_handle.succeed()
+
+                    self.run_next_goal()
+                    return TTS.Result()
+
 
             else:
                 # streaming mode (keep as-is)
@@ -289,13 +313,20 @@ class TtsNode(Node):
                     goal_handle.publish_feedback(feedback)
                     self._pub_rate.sleep()
 
-                    if not self.stream:
-                        break
+                    #if not self.stream:
+                    #    break
+                    self.get_logger().info("Waiting for robot to finish speaking...")
+                    if not self.wait_for_audio_playback(timeout_sec=10.0):
+                        goal_handle.abort()
+                        self.get_logger().error("Audio was not played (timeout).")
+                        return TTS.Result()
 
-            result = TTS.Result()
-            result.text = text
-            goal_handle.succeed()
-            return result
+                    self.get_logger().info("Finished speaking.")
+                    result = TTS.Result()
+                    result.text = text
+                    goal_handle.succeed()
+                    return result
+
 
     def run_next_goal(self) -> bool:
         with self._goal_queue_lock:

@@ -6,10 +6,10 @@ This code includes a wrapper of ROS2 with COQUI-TTS, based on the existing solut
 In order to test it, first you need to download an example WAV file that will be used to clone the voice. For example, create it with  from [ttsmp3.com](https://ttsmp3.com/), convert it to WAV format with vith this [converter](https://www.viewpdf.com/result.html?e=0&c=mp3-to-wav#).
 
 You also need to download the models in the tts_ros/config/ folder. 
-Then execute the TTS ROS2 node, specifying the path of the WAV file:  
+Then execute the TTS ROS2 node, specifying the path of the WAV file. NOTE this is currently working on Arnau's computer docker "emorobcare": 
 
 ```shell
- ros2 run tts_ros tts_node --ros-args   -p stream:=false  -p speaker_wav:=/home/user/emorob_ws/src/audios/voice.wav
+ ros2 run tts_ros tts_node --ros-args   -p stream:=false  -p speaker_wav:=/home/user/ws/src/audios/voice.wav
 ```
 
 Note that usually we want to set stream:=false, as this will publish the whole TTS together on the ROS2 topic 'audio'. We can investigate how to publish it progressively. 
@@ -21,7 +21,27 @@ Then test by calling the action:
  ros2 action send_goal /say audio_tts_msgs/action/TTS "{'text': 'Hola, soy un robot muy alegre que quiere jugar contigo', 'language': 'es', 'volume': 0.8, 'rate': 1.2}"
 ```
 
-The output will be publishes on `audio` topic (to check naming). To play it directly, use the [audio_player](https://github.com/EMOROBOCARE/audio_player) package. 
+The output will be publishes on `audio` topic (to check naming). To play it directly, use the [audio_player](https://github.com/EMOROBOCARE/audio_player) package, see the repository on how to set it up. The action monitors the /robot_speaking topic (of type std_msgs/msg/Bool), and only returns success once it is set back to False (the robot has finished playing the audio). Note for these you need to set-up ROS2 multicasting between both computers with CYCLONE (see the audio_player repo). To test it without the audio player, you can manually set it to True with:
+
+```shell
+ros2 topic pub /robot_speaking std_msgs/msg/Bool "{data: true}" --once
+```
+
+
+## ROS interfaces
+
+Publishers:
+
+**/tts/audio** of type **audio_tts_msgs/msg/AudioStamped**: publishes the audio stream
+
+Subscription:
+
+**/robot_speaking** of type **std_msgs/msg/Bool**: sets to True when the audio starts playing, and back to False when it finishes playing. 
+
+Actions:
+
+**/say** of type audio_tts_msgs/action/TTS: gets as input the text, language, volume and rate to use, and returns success when audio has finished
+playig. Note right now in our current models we are not managing volume and rate (WIP). 
 
 
 
