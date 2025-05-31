@@ -47,6 +47,12 @@ from audio_tts_msgs.action import TTS
 from tts_ros.utils import data_to_msg, get_msg_chunk
 from std_msgs.msg import Bool
 import time
+import os
+import re 
+import numpy as np
+
+EMOTION_TAGS = ["fear", "happiness", "neutral", "surprise"]
+
 
 class TtsNode(Node):
 
@@ -91,7 +97,7 @@ class TtsNode(Node):
         vocab_path = model_dir / "vocab.json"
         speakers_path = model_dir / "speakers_xtts.pth"
         config_path = model_dir / "config.json"
-
+        self.embedding_path = model_dir / "speaker_embeddings/41"
         self.get_logger().info("Loading XTTS model...")
         config = XttsConfig()
         config.load_json(str(config_path))
@@ -104,7 +110,8 @@ class TtsNode(Node):
             speaker_file_path=str(speakers_path),
             use_deepspeed=False,
         )
-
+        self.emotion_embeddings = self.get_emotion_embeddings()
+        self.EMOTION_TAG_RE = re.compile(r"<(\w+)>(.*?)</\1>", re.DOTALL)
         # Set device
         if self.device == "cuda":
             self.tts.cuda()
@@ -150,6 +157,72 @@ class TtsNode(Node):
         self.get_logger().info("got embeeddings")
         
         self.get_logger().info("TTS node started")
+
+    def get_emotion_embeddings(self):
+        emotion_embeddings = {}
+        for emotion in os.listdir(self.embedding_path):
+            emotion_embeddings[emotion] = {
+                "speaker_embedding": torch.load(os.path.join(self.embedding_path, emotion, f"speaker_embedding_{emotion}.pth")),
+                "gpt_cond_latent": torch.load(os.path.join(self.embedding_path, emotion, f"gpt_cond_latent_{emotion}.pth")),
+            }
+        print("Loaded with emotions", [em for em in emotion_embeddings.keys()])
+        return emotion_embeddings
+
+    def generate_speech(self, text, emotion="neutral", parse_emotions=False):
+        self.get_logger().info("Text to say")
+        self.get_logger().info(text)
+        if emotion not in self.emotion_embeddings:
+            raise ValueError(f"Emotion '{emotion}' not found in the embeddings.")
+
+        if not parse_emotions:
+            out = self.tts.inference(
+                text,
+                "es",
+                self.emotion_embeddings[emotion]["gpt_cond_latent"],
+                self.emotion_embeddings[emotion]["speaker_embedding"],
+                temperature=0.9,
+            )
+            return out
+        else:
+            chunks = self.parse_emotions(text)
+            self.get_logger().info(f"{chunks}")
+            if len(chunks) == 0:
+                out = self.tts.inference(
+                    text,
+                    "es",
+                    self.emotion_embeddings[emotion]["gpt_cond_latent"],
+                    self.emotion_embeddings[emotion]["speaker_embedding"],
+                    temperature=0.9,
+                )
+                return out
+            else:
+                audio_arrays = []
+
+                for chk in chunks:
+                    emotion = chk[0]
+                    txt = chk[1]
+                    out = self.tts.inference(
+                        txt,
+                        "es",
+                        self.emotion_embeddings[emotion]["gpt_cond_latent"],
+                        self.emotion_embeddings[emotion]["speaker_embedding"],
+                        temperature=0.9,
+                    )
+                    wav = out.get("wav")
+                    if wav is not None and len(wav) > 0:
+                        audio_arrays.append(wav)
+
+                # Concatenate all audio chunks
+                if len(audio_arrays) > 0:
+                    full_audio = np.concatenate(audio_arrays)
+                else:
+                    full_audio = out
+
+                # Return the same structure as a single inference output
+                return {"wav": full_audio}
+
+    def parse_emotions(self, text: str):
+            return self.EMOTION_TAG_RE.findall(text)
 
     def wait_for_audio_playback(self, timeout_sec=10.0) -> bool:
         """Waits for the robot_speaks flag to become False with a timeout."""
@@ -203,17 +276,12 @@ class TtsNode(Node):
 
         try:
             if not self.stream:
-                out = self.tts.inference(
-                    text,
-                    language,
-                    self.gpt_cond_latent,
-                    self.speaker_embedding,
-                    temperature=0.7,
-                )
+                out = self.generate_speech(text, emotion="neutral", parse_emotions=True)
                 wav = torch.tensor(out["wav"]).unsqueeze(0)
                 data = wav.numpy().flatten()
                 data = np.clip(data, -1, 1)
                 data = (data * 32767).astype(np.int16)
+
 
                 # Create and publish full audio message at once
                 audio_msg = data_to_msg(data, audio_format)

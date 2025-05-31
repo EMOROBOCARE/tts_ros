@@ -10,10 +10,11 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/model', [
             'config/model.pth',
-            'config//vocab.json',
-            'config//speakers_xtts.pth',
+            'config/vocab.json',
+            'config/speakers_xtts.pth',
             'config/config.json'
         ])
+            ('share/' + package_name + '/speaker_embeddings/41', glob.glob('config/speaker_embeddings/41/*'))
     ],
     install_requires=['setuptools'],
     zip_safe=True,
