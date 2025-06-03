@@ -30,8 +30,9 @@ import collections
 import numpy as np
 import torch
 import torchaudio
-from TTS.tts.models.xtts import Xtts
-from TTS.tts.configs.xtts_config import XttsConfig
+
+from tts_ros.tts_ros.tts import EmoRobCareTTS
+
 from ament_index_python.packages import get_package_share_directory
 from pathlib import Path
 import rclpy
@@ -50,8 +51,6 @@ import time
 import os
 import re 
 import numpy as np
-
-EMOTION_TAGS = ["fear", "happiness", "neutral", "surprise"]
 
 
 class TtsNode(Node):
@@ -97,34 +96,15 @@ class TtsNode(Node):
         vocab_path = model_dir / "vocab.json"
         speakers_path = model_dir / "speakers_xtts.pth"
         config_path = model_dir / "config.json"
+
+        self.voice_actor = 41  # Default voice actor ID TODO: make this configurable
+
+        self.get_logger().info("Loading TTS with model from directory: " + str(model_dir))
+
         self.embedding_path = model_dir / "speaker_embeddings/41"
         self.get_logger().info("Loading XTTS model...")
-        config = XttsConfig()
-        config.load_json(str(config_path))
 
-        self.tts = Xtts.init_from_config(config)
-        self.tts.load_checkpoint(
-            config,
-            checkpoint_path=str(checkpoint_path),
-            vocab_path=str(vocab_path),
-            speaker_file_path=str(speakers_path),
-            use_deepspeed=False,
-        )
-        self.emotion_embeddings = self.get_emotion_embeddings()
-        self.EMOTION_TAG_RE = re.compile(r"<(\w+)>(.*?)</\1>", re.DOTALL)
-        # Set device
-        if self.device == "cuda":
-            self.tts.cuda()
-        else:
-            self.tts.cpu()
-
-        # Validate speaker WAV path if provided
-        if not self.speaker_wav or not (Path(self.speaker_wav).exists() and Path(self.speaker_wav).is_file()):
-            self.speaker_wav = None
-
-        # Validate speaker param for multi-speaker model
-        #if not self.speaker or not self.tts.is_multi_speaker:
-        #    self.speaker = None
+        self.tts = EmoRobCareTTS(root_path=str(model_dir), voice_actor=self.voice_actor)
 
         # Goal queue for handling action server requests
         self._goal_queue = collections.deque()
@@ -135,8 +115,10 @@ class TtsNode(Node):
         self._pub_rate = None
         self._pub_lock = threading.Lock()
         self.__player_pub = self.create_publisher(AudioStamped, "/tts/audio", qos_profile_sensor_data)
+
         self.voice_detected_sub = self.create_subscription(
             Bool, "/robot_speaking", self.on_robot_speaking, 1)
+
         # Action server setup
         self._action_server = ActionServer(
             self,
@@ -158,72 +140,6 @@ class TtsNode(Node):
         
         self.get_logger().info("TTS node started")
 
-    def get_emotion_embeddings(self):
-        emotion_embeddings = {}
-        for emotion in os.listdir(self.embedding_path):
-            emotion_embeddings[emotion] = {
-                "speaker_embedding": torch.load(os.path.join(self.embedding_path, emotion, f"speaker_embedding_{emotion}.pth")),
-                "gpt_cond_latent": torch.load(os.path.join(self.embedding_path, emotion, f"gpt_cond_latent_{emotion}.pth")),
-            }
-        print("Loaded with emotions", [em for em in emotion_embeddings.keys()])
-        return emotion_embeddings
-
-    def generate_speech(self, text, emotion="neutral", parse_emotions=False):
-        self.get_logger().info("Text to say")
-        self.get_logger().info(text)
-        if emotion not in self.emotion_embeddings:
-            raise ValueError(f"Emotion '{emotion}' not found in the embeddings.")
-
-        if not parse_emotions:
-            out = self.tts.inference(
-                text,
-                "es",
-                self.emotion_embeddings[emotion]["gpt_cond_latent"],
-                self.emotion_embeddings[emotion]["speaker_embedding"],
-                temperature=0.9,
-            )
-            return out
-        else:
-            chunks = self.parse_emotions(text)
-            self.get_logger().info(f"{chunks}")
-            if len(chunks) == 0:
-                out = self.tts.inference(
-                    text,
-                    "es",
-                    self.emotion_embeddings[emotion]["gpt_cond_latent"],
-                    self.emotion_embeddings[emotion]["speaker_embedding"],
-                    temperature=0.9,
-                )
-                return out
-            else:
-                audio_arrays = []
-
-                for chk in chunks:
-                    emotion = chk[0]
-                    txt = chk[1]
-                    out = self.tts.inference(
-                        txt,
-                        "es",
-                        self.emotion_embeddings[emotion]["gpt_cond_latent"],
-                        self.emotion_embeddings[emotion]["speaker_embedding"],
-                        temperature=0.9,
-                    )
-                    wav = out.get("wav")
-                    if wav is not None and len(wav) > 0:
-                        audio_arrays.append(wav)
-
-                # Concatenate all audio chunks
-                if len(audio_arrays) > 0:
-                    full_audio = np.concatenate(audio_arrays)
-                else:
-                    full_audio = out
-
-                # Return the same structure as a single inference output
-                return {"wav": full_audio}
-
-    def parse_emotions(self, text: str):
-            return self.EMOTION_TAG_RE.findall(text)
-
     def wait_for_audio_playback(self, timeout_sec=10.0) -> bool:
         """Waits for the robot_speaks flag to become False with a timeout."""
         start_time = time.time()
@@ -235,7 +151,6 @@ class TtsNode(Node):
         return True
 
     def on_robot_speaking(self, msg):
-
         self.robot_speaks= msg.data
 
     def destroy_node(self) -> bool:
@@ -276,12 +191,10 @@ class TtsNode(Node):
 
         try:
             if not self.stream:
-                out = self.generate_speech(text, emotion="neutral", parse_emotions=True)
-                wav = torch.tensor(out["wav"]).unsqueeze(0)
+                wav = self.tts.generate_speech(text, emotion="neutral", parse_emotions=True)
                 data = wav.numpy().flatten()
                 data = np.clip(data, -1, 1)
                 data = (data * 32767).astype(np.int16)
-
 
                 # Create and publish full audio message at once
                 audio_msg = data_to_msg(data, audio_format)

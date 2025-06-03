@@ -11,13 +11,17 @@ from TTS.tts.models.xtts import Xtts
 
 class EmoRobCareTTS:
     EMOTION_TAGS = ["fear", "happiness", "neutral", "surprise"]
-    def __init__(self, config_path, voice_actor=41):
-        print("Loading model...")
+    def __init__(self, root_path, voice_actor=41):
+        self.root_path = root_path
         self.config = XttsConfig()
-        self.config.load_json(config_path)
+        self.config.load_json(os.path.join(self.root_path, "config.json"))
         self.model = Xtts.init_from_config(self.config)
-        self.model.load_checkpoint(self.config, checkpoint_path="model/model.pth", vocab_path="model/vocab.json",
-                              speaker_file_path="model/speakers_xtts.pth", use_deepspeed=False)
+        self.model.load_checkpoint(self.config,
+                                   checkpoint_path=os.path.join(self.root_path, "model.pth"),
+                                   vocab_path=os.path.join(self.root_path, "vocab.json"),
+                                   speaker_file_path=os.path.join(self.root_path, "speakers_xtts.pth"),
+                                   use_deepspeed=False
+        )
         if torch.cuda.is_available():
             self.model.cuda()
 
@@ -26,6 +30,7 @@ class EmoRobCareTTS:
         self.emotion_embeddings = self.get_emotion_embeddings()
 
         self.EMOTION_TAG_RE = re.compile(r"<(\w+)>(.*?)</\1>", re.DOTALL)
+
         self.buffer = deque([], maxlen=20)  # Buffer to store recent text chunks
         self.out_queue = deque([], maxlen=20)  # Output queue for generated audio
 
@@ -50,9 +55,10 @@ class EmoRobCareTTS:
                 self.emotion_embeddings[emotion]["speaker_embedding"],
                 temperature=0.9,  # Add custom parameters here
             )
+            wav = torch.tensor(out["wav"]).unsqueeze(0)
             if save_path is None:
-                torchaudio.save(save_path, torch.tensor(out["wav"]).unsqueeze(0), 24000)
-            return out
+                torchaudio.save(save_path, wav, 24000)
+            return wav
         else:
             chunks = self.parse_emotions(text)
             audios = []

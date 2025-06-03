@@ -1,0 +1,1 @@
+model from https://huggingface.co/coqui/XTTS-v2/tree/main
