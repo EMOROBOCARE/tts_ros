@@ -31,7 +31,7 @@ import numpy as np
 import torch
 import torchaudio
 
-from tts_ros.tts_ros.tts import EmoRobCareTTS
+from tts_ros.tts import EmoRobCareTTS
 
 from ament_index_python.packages import get_package_share_directory
 from pathlib import Path
@@ -79,12 +79,6 @@ class TtsNode(Node):
         self.chunk = self.get_parameter("chunk").get_parameter_value().integer_value
         self.frame_id = self.get_parameter("frame_id").get_parameter_value().string_value
 
-        model = self.get_parameter("model").get_parameter_value().string_value
-        model_path = self.get_parameter("model_path").get_parameter_value().string_value
-        config_path_param = self.get_parameter("config_path").get_parameter_value().string_value
-        vocoder_path = self.get_parameter("vocoder_path").get_parameter_value().string_value
-        vocoder_config_path = self.get_parameter("vocoder_config_path").get_parameter_value().string_value
-
         self.speaker_wav = self.get_parameter("speaker_wav").get_parameter_value().string_value
         self.speaker = self.get_parameter("speaker").get_parameter_value().string_value
         self.device = self.get_parameter("device").get_parameter_value().string_value
@@ -92,10 +86,6 @@ class TtsNode(Node):
 
         # Load model files from package share directory + config folder
         model_dir = Path(get_package_share_directory("tts_ros")) / "config"
-        checkpoint_path = model_dir / "model.pth"
-        vocab_path = model_dir / "vocab.json"
-        speakers_path = model_dir / "speakers_xtts.pth"
-        config_path = model_dir / "config.json"
 
         self.voice_actor = 41  # Default voice actor ID TODO: make this configurable
 
@@ -131,13 +121,6 @@ class TtsNode(Node):
             callback_group=ReentrantCallbackGroup(),
         )
 
-        self.get_logger().debug(f"Stream: {self.stream} Speaker WAV: {self.speaker_wav}")
-
-        self.gpt_cond_latent, self.speaker_embedding = self.tts.get_conditioning_latents(
-                audio_path=[self.speaker_wav]
-        )
-        self.get_logger().info("got embeeddings")
-        
         self.get_logger().info("TTS node started")
 
     def wait_for_audio_playback(self, timeout_sec=10.0) -> bool:

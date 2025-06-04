@@ -13,17 +13,17 @@ class EmoRobCareTTS:
     EMOTION_TAGS = ["fear", "happiness", "neutral", "surprise"]
     def __init__(self, root_path, voice_actor=41):
         self.root_path = root_path
+        self.model_path = os.path.join(self.root_path, "model")
         self.config = XttsConfig()
         self.config.load_json(os.path.join(self.root_path, "config.json"))
         self.model = Xtts.init_from_config(self.config)
         self.model.load_checkpoint(self.config,
-                                   checkpoint_path=os.path.join(self.root_path, "model.pth"),
-                                   vocab_path=os.path.join(self.root_path, "vocab.json"),
-                                   speaker_file_path=os.path.join(self.root_path, "speakers_xtts.pth"),
+                                   checkpoint_path=os.path.join(self.model_path, "model.pth"),
+                                   vocab_path=os.path.join(self.model_path, "vocab.json"),
+                                   speaker_file_path=os.path.join(self.model_path, "speakers_xtts.pth"),
                                    use_deepspeed=False
         )
-        if torch.cuda.is_available():
-            self.model.cuda()
+
 
         self.voice_actor = voice_actor
         self.emotion_embeddings_path = os.path.join(self.root_path, f"speaker_embeddings/{voice_actor}")
@@ -34,12 +34,17 @@ class EmoRobCareTTS:
         self.buffer = deque([], maxlen=20)  # Buffer to store recent text chunks
         self.out_queue = deque([], maxlen=20)  # Output queue for generated audio
 
+        if torch.cuda.is_available():
+            print("Running on GPU")
+            self.model.cuda()
+
     def get_emotion_embeddings(self):
         emotion_embeddings = {}
         for emotion in os.listdir(self.emotion_embeddings_path):
+            print(os.path.join(self.emotion_embeddings_path, emotion, f"speaker_embedding_{emotion}.pth"))
             emotion_embeddings[emotion] = {
-                "speaker_embedding": torch.load(os.path.join(self.emotion_embeddings_path, emotion, f"speaker_embedding_{emotion}.pth")),
-                "gpt_cond_latent": torch.load(os.path.join(self.emotion_embeddings_path, emotion, f"gpt_cond_latent_{emotion}.pth")),
+                "speaker_embedding": torch.load(os.path.join(self.emotion_embeddings_path, emotion, f"speaker_embedding_{emotion}.pth"), map_location=torch.device('cpu')),
+                "gpt_cond_latent": torch.load(os.path.join(self.emotion_embeddings_path, emotion, f"gpt_cond_latent_{emotion}.pth"), map_location=torch.device('cpu')),
             }
         print("Loaded with emotions", [em for em in emotion_embeddings.keys()])
         return emotion_embeddings
