@@ -26,7 +26,7 @@ class EmoRobCareTTS:
             self.model.cuda()
 
         self.voice_actor = voice_actor
-        self.path = f"speaker_embeddings/{self.voice_actor}"
+        self.emotion_embeddings_path = os.path.join(self.root_path, f"speaker_embeddings/{voice_actor}")
         self.emotion_embeddings = self.get_emotion_embeddings()
 
         self.EMOTION_TAG_RE = re.compile(r"<(\w+)>(.*?)</\1>", re.DOTALL)
@@ -36,10 +36,10 @@ class EmoRobCareTTS:
 
     def get_emotion_embeddings(self):
         emotion_embeddings = {}
-        for emotion in os.listdir(self.path):
+        for emotion in os.listdir(self.emotion_embeddings_path):
             emotion_embeddings[emotion] = {
-                "speaker_embedding": torch.load(os.path.join(self.path, emotion, f"speaker_embedding_{emotion}.pth")),
-                "gpt_cond_latent": torch.load(os.path.join(self.path, emotion, f"gpt_cond_latent_{emotion}.pth")),
+                "speaker_embedding": torch.load(os.path.join(self.emotion_embeddings_path, emotion, f"speaker_embedding_{emotion}.pth")),
+                "gpt_cond_latent": torch.load(os.path.join(self.emotion_embeddings_path, emotion, f"gpt_cond_latent_{emotion}.pth")),
             }
         print("Loaded with emotions", [em for em in emotion_embeddings.keys()])
         return emotion_embeddings
