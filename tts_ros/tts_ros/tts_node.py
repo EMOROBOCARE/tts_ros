@@ -165,8 +165,8 @@ class TtsNode(Node):
         emotion_embeddings = {}
         for emotion in os.listdir(self.embedding_path):
             emotion_embeddings[emotion] = {
-                "speaker_embedding": torch.load(os.path.join(self.embedding_path, emotion, f"speaker_embedding_{emotion}.pth")),
-                "gpt_cond_latent": torch.load(os.path.join(self.embedding_path, emotion, f"gpt_cond_latent_{emotion}.pth")),
+                "speaker_embedding": torch.load(os.path.join(self.embedding_path, emotion, f"speaker_embedding_{emotion}.pth"), map_location=torch.device('cpu')),
+                "gpt_cond_latent": torch.load(os.path.join(self.embedding_path, emotion, f"gpt_cond_latent_{emotion}.pth"), map_location=torch.device('cpu')),
             }
         print("Loaded with emotions", [em for em in emotion_embeddings.keys()])
         return emotion_embeddings
