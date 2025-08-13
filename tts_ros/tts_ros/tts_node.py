@@ -55,7 +55,7 @@ from gtts import gTTS
 from std_srvs.srv import Trigger
 import io
 
-EMOTION_TAGS = ["fear", "happiness", "neutral", "surprise"]
+EMOTION_TAGS = ["fear", "happy", "neutral", "surprised"]
 
 
 class TtsNode(Node):
@@ -75,7 +75,7 @@ class TtsNode(Node):
                 ("vocoder_path", ""),
                 ("vocoder_config_path", ""),
                 ("device", "cpu"),
-                ("speaker_wav", ""),
+                ("speaker_wav", "/home/user/exchange/src/tts_ros/tts_ros/config/neutral_example.wav"),
                 ("speaker", ""),
                 ("stream", False),
                 ("tts_engine", "gtts"),
@@ -119,7 +119,10 @@ class TtsNode(Node):
             )
             self.emotion_embeddings = self.get_emotion_embeddings()
             #for the new one <expression(happy)>hello</expression(happy)>
-            self.EMOTION_TAG_RE = re.compile(r"<expression\((\w+)\)>(.*?)</expression\(\1\)>", re.DOTALL)
+            #sara foxomg tjos 22md july
+            self.EMOTION_TAG_RE = re.compile(r"<expression\((\w+)\)>(.*?)</expression>", re.DOTALL)
+
+            #self.EMOTION_TAG_RE = re.compile(r"<expression\((\w+)\)>(.*?)</expression\(\1\)>", re.DOTALL)
             #self.EMOTION_TAG_RE = re.compile(r"<(\w+)>(.*?)</\1>", re.DOTALL)
             self.gpt_cond_latent, self.speaker_embedding = self.tts.get_conditioning_latents(
                     audio_path=[self.speaker_wav]
@@ -174,6 +177,7 @@ class TtsNode(Node):
     def generate_speech(self, text, emotion="neutral", parse_emotions=False):
         self.get_logger().info("Text to say")
         self.get_logger().info(text)
+        self.get_logger().info(emotion)
         if emotion not in self.emotion_embeddings:
             raise ValueError(f"Emotion '{emotion}' not found in the embeddings.")
 
@@ -189,6 +193,7 @@ class TtsNode(Node):
         else:
             chunks = self.parse_emotions(text)
             self.get_logger().info(f"{chunks}")
+
             if len(chunks) == 0:
                 out = self.tts.inference(
                     text,
