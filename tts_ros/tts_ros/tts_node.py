@@ -24,14 +24,11 @@
 
 import wave
 import pyaudio
-import tempfile
 import threading
 import collections
 import numpy as np
-import torch
-import torchaudio
-from TTS.tts.models.xtts import Xtts
-from TTS.tts.configs.xtts_config import XttsConfig
+#from TTS.tts.models.xtts import Xtts
+#from TTS.tts.configs.xtts_config import XttsConfig
 from ament_index_python.packages import get_package_share_directory
 from pathlib import Path
 import rclpy
@@ -44,18 +41,22 @@ from rclpy.executors import MultiThreadedExecutor
 
 from audio_tts_msgs.msg import AudioStamped
 from audio_tts_msgs.action import TTS
-from tts_ros.utils import data_to_msg, get_msg_chunk
+from tts_ros.utils import array_to_msg, get_msg_chunk
 from std_msgs.msg import Bool
 import time
-import os
-import re 
 import numpy as np
 import subprocess
-from gtts import gTTS
 from std_srvs.srv import Trigger
 import io
+import tempfile
+import requests
+from io import BytesIO
 
-EMOTION_TAGS = ["fear", "happy", "neutral", "surprised"]
+EMOTION_TAGS = ["fear", "happiness", "neutral", "surprised"]
+import re
+
+# regex to parse tags like: [happy] Hello world
+EMOTION_TAG_RE = re.compile(r"^\s*\[([A-Za-z]+)\]\s*(.*)", re.IGNORECASE)
 
 
 class TtsNode(Node):
@@ -67,75 +68,13 @@ class TtsNode(Node):
         self.declare_parameters(
             "",
             [
-                ("chunk", 4096),
                 ("frame_id", ""),
-                ("model", "tts_models/en/ljspeech/vits"),
-                ("model_path", ""),
-                ("config_path", ""),
-                ("vocoder_path", ""),
-                ("vocoder_config_path", ""),
-                ("device", "cpu"),
-                ("speaker_wav", "/home/user/exchange/src/tts_ros/tts_ros/config/neutral_example.wav"),
-                ("speaker", ""),
-                ("stream", False),
-                ("tts_engine", "gtts"),
             ],
         )
         self.robot_speaks = False
-        self.chunk = self.get_parameter("chunk").get_parameter_value().integer_value
         self.frame_id = self.get_parameter("frame_id").get_parameter_value().string_value
 
-        model = self.get_parameter("model").get_parameter_value().string_value
-        model_path = self.get_parameter("model_path").get_parameter_value().string_value
-        config_path_param = self.get_parameter("config_path").get_parameter_value().string_value
-        vocoder_path = self.get_parameter("vocoder_path").get_parameter_value().string_value
-        vocoder_config_path = self.get_parameter("vocoder_config_path").get_parameter_value().string_value
-
-        self.tts_engine = self.get_parameter("tts_engine").get_parameter_value().string_value
-        self.speaker_wav = self.get_parameter("speaker_wav").get_parameter_value().string_value
-        self.speaker = self.get_parameter("speaker").get_parameter_value().string_value
-        self.device = self.get_parameter("device").get_parameter_value().string_value
-        self.stream = self.get_parameter("stream").get_parameter_value().bool_value
         self.stop_audio_client = self.create_client(Trigger, '/stop_audio_playback')
-        if self.tts_engine == "xtts":
-            # Load model files from package share directory + config folder
-            model_dir = Path(get_package_share_directory("tts_ros")) / "config"
-            checkpoint_path = model_dir / "model.pth"
-            vocab_path = model_dir / "vocab.json"
-            speakers_path = model_dir / "speakers_xtts.pth"
-            config_path = model_dir / "config.json"
-            self.embedding_path = model_dir / "speaker_embeddings/41"
-            self.get_logger().info("Loading XTTS model...")
-            config = XttsConfig()
-            config.load_json(str(config_path))
-
-            self.tts = Xtts.init_from_config(config)
-            self.tts.load_checkpoint(
-                config,
-                checkpoint_path=str(checkpoint_path),
-                vocab_path=str(vocab_path),
-                speaker_file_path=str(speakers_path),
-                use_deepspeed=False,
-            )
-            self.emotion_embeddings = self.get_emotion_embeddings()
-            #for the new one <expression(happy)>hello</expression(happy)>
-            #sara foxomg tjos 22md july
-            self.EMOTION_TAG_RE = re.compile(r"<expression\((\w+)\)>(.*?)</expression>", re.DOTALL)
-
-            #self.EMOTION_TAG_RE = re.compile(r"<expression\((\w+)\)>(.*?)</expression\(\1\)>", re.DOTALL)
-            #self.EMOTION_TAG_RE = re.compile(r"<(\w+)>(.*?)</\1>", re.DOTALL)
-            self.gpt_cond_latent, self.speaker_embedding = self.tts.get_conditioning_latents(
-                    audio_path=[self.speaker_wav]
-            )
-            # Set device
-            if self.device == "cuda":
-                self.tts.cuda()
-            else:
-                self.tts.cpu()
-
-            # Validate speaker WAV path if provided
-            if not self.speaker_wav or not (Path(self.speaker_wav).exists() and Path(self.speaker_wav).is_file()):
-                self.speaker_wav = None
 
         # Goal queue for handling action server requests
         self._goal_queue = collections.deque()
@@ -160,79 +99,78 @@ class TtsNode(Node):
             callback_group=ReentrantCallbackGroup(),
         )
 
-        self.get_logger().debug(f"Stream: {self.stream} Speaker WAV: {self.speaker_wav}")
-        
         self.get_logger().info("TTS node started")
 
-    def get_emotion_embeddings(self):
-        emotion_embeddings = {}
-        for emotion in os.listdir(self.embedding_path):
-            emotion_embeddings[emotion] = {
-                "speaker_embedding": torch.load(os.path.join(self.embedding_path, emotion, f"speaker_embedding_{emotion}.pth"), map_location=torch.device('cpu')),
-                "gpt_cond_latent": torch.load(os.path.join(self.embedding_path, emotion, f"gpt_cond_latent_{emotion}.pth"), map_location=torch.device('cpu')),
-            }
-        print("Loaded with emotions", [em for em in emotion_embeddings.keys()])
-        return emotion_embeddings
 
-    def generate_speech(self, text, emotion="neutral", parse_emotions=False):
-        self.get_logger().info("Text to say")
-        self.get_logger().info(text)
-        self.get_logger().info(emotion)
-        if emotion not in self.emotion_embeddings:
-            raise ValueError(f"Emotion '{emotion}' not found in the embeddings.")
+    def generate_speech(self, text, emotion="neutral", language="es", temperature=0.9):
+        log_str = f"Emotion: {emotion}\t Generated text: {text}\t"
+        print(log_str)
+        #if emotion not in self.emotion_embeddings:
+        #    raise ValueError(f"Emotion '{emotion}' not found in the embeddings.")
+        json_payload = {
+            "text": text,
+            "emotion": emotion,
+            "temperature": temperature,
+            "language": language
+        }
+        url = "http://localhost:80/tts/read"
+        t0 = time.time()
+        # Call local TTS HTTP server (/tts/read) with a sensible timeout
+        try:
+            response = requests.post(url, json=json_payload, timeout=10.0)
+        except requests.exceptions.RequestException as e:
+            self.get_logger().error(f"TTS request failed: {e}")
+            return None, None
 
-        if not parse_emotions:
-            out = self.tts.inference(
-                text,
-                "es",
-                self.emotion_embeddings[emotion]["gpt_cond_latent"],
-                self.emotion_embeddings[emotion]["speaker_embedding"],
-                temperature=0.9,
-            )
-            return out
-        else:
-            chunks = self.parse_emotions(text)
-            self.get_logger().info(f"{chunks}")
+        audio_array = None
+        sample_rate = None
+        if response.status_code == 200:
+            try:
+                with wave.open(BytesIO(response.content), "rb") as wav_file:
+                    frames = wav_file.readframes(wav_file.getnframes())
+                    nchannels = wav_file.getnchannels()
+                    sampwidth = wav_file.getsampwidth()
+                    sample_rate = wav_file.getframerate()
 
-            if len(chunks) == 0:
-                out = self.tts.inference(
-                    text,
-                    "es",
-                    self.emotion_embeddings[emotion]["gpt_cond_latent"],
-                    self.emotion_embeddings[emotion]["speaker_embedding"],
-                    temperature=0.9,
-                )
-                return out
-            else:
-                audio_arrays = []
-
-                for chk in chunks:
-                    emotion = chk[0]
-                    txt = chk[1]
-                    out = self.tts.inference(
-                        txt,
-                        "es",
-                        self.emotion_embeddings[emotion]["gpt_cond_latent"],
-                        self.emotion_embeddings[emotion]["speaker_embedding"],
-                        temperature=0.9,
-                    )
-                    wav = out.get("wav")
-                    if wav is not None and len(wav) > 0:
-                        audio_arrays.append(wav)
-
-                # Concatenate all audio chunks
-                if len(audio_arrays) > 0:
-                    full_audio = np.concatenate(audio_arrays)
+                # Map sampwidth to numpy dtype
+                if sampwidth == 1:
+                    dtype = np.uint8
+                    # uint8 WAV is unsigned with 128 offset
+                    raw = np.frombuffer(frames, dtype=dtype).astype(np.float32)
+                    audio_array = (raw - 128.0) / 128.0
+                elif sampwidth == 2:
+                    dtype = np.int16
+                    raw = np.frombuffer(frames, dtype=dtype).astype(np.float32)
+                    audio_array = raw / 32767.0
+                elif sampwidth == 4:
+                    # assume 32-bit PCM
+                    dtype = np.int32
+                    raw = np.frombuffer(frames, dtype=dtype).astype(np.float32)
+                    audio_array = raw / 2147483647.0
                 else:
-                    full_audio = out
+                    self.get_logger().error(f"Unsupported sample width: {sampwidth}")
+                    return None, None
 
-                # Return the same structure as a single inference output
-                return {"wav": full_audio}
+                # If stereo, convert to mono by averaging channels
+                if nchannels > 1:
+                    audio_array = audio_array.reshape(-1, nchannels).mean(axis=1)
+
+            except Exception as e:
+                self.get_logger().error(f"Failed to parse WAV response: {e}")
+                return None, None
+        else:
+            self.get_logger().error(f"Error {response.status_code}: {response.text}")
+
+        log_str += f"Inference time: {round(time.time()-t0, 2)}"
+        self.get_logger().info(log_str)
+        return audio_array, sample_rate
+        
 
     def parse_emotions(self, text: str):
-            return self.EMOTION_TAG_RE.findall(text)
+        return EMOTION_TAG_RE.findall(text)
 
     def wait_for_audio_playback(self, goal_handle, timeout_sec=10.0) -> bool:
+        self.get_logger().info("waiting for audio to finish")
         start_time = time.time()
         canceled = False
         while self.robot_speaks:
@@ -280,147 +218,91 @@ class TtsNode(Node):
         request: TTS.Goal = goal_handle.request
         text = request.text
         language = request.language
+        temperature = request.temperature
 
         if not text.strip():
             goal_handle.succeed()
             return TTS.Result()
 
-        if self.tts_engine == "gtts":
-            return self.execute_gtts(goal_handle, text, language)
-        elif self.tts_engine == "xtts":
-            return self.execute_xtts(goal_handle, text, language)
+        return self.execute_xtts(goal_handle, text, language, temperature)
 
-    def execute_gtts(self, goal_handle: ServerGoalHandle, text: str, language: str) -> TTS.Result:
-        text = re.sub(r'<expression\((.*?)\)>(.*?)</expression\(\1\)>', r'\2', text, flags=re.DOTALL)
-        self.get_logger().info(text)
+    def execute_xtts(self, goal_handle: ServerGoalHandle, text: str, language: str, temperature: float) -> TTS.Result:
+
+        self.get_logger().info("Generating Audio")
+        emotion_map = {
+            "happy": "happiness",
+            "neutral": "neutral", 
+            "surprised": "surprise"
+        }
+
         try:
-            mp3_fp = io.BytesIO()
-            tts = gTTS(text=text, lang=language or "en")
-            tts.write_to_fp(mp3_fp)
-            mp3_fp.seek(0)
+            match = EMOTION_TAG_RE.match(text.strip())
+            if match:
+                emotion = match.group(1).lower()
+                emotion = emotion_map.get(emotion, emotion)  # normalize
+                inner_text = match.group(2).strip()
+                self.get_logger().info(f"Parsed emotion: {emotion}, text: {inner_text}")
+                out, rate = self.generate_speech(inner_text, emotion=str(emotion), language=language, temperature=temperature)
+            else:
+                out, rate = self.generate_speech(text, emotion="neutral", language=language, temperature=temperature)
 
-            wav_bytes = subprocess.run(
-                ["ffmpeg", "-i", "pipe:0", "-ar", "24000", "-ac", "1", "-f", "wav", "pipe:1"],
-                input=mp3_fp.read(),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                check=True,
-            ).stdout
+            if out is None:
+                self.get_logger().error("No audio returned from TTS server")
+                try:
+                    goal_handle.abort()
+                except Exception:
+                    pass
+                result = TTS.Result()
+                result.text = text
+                return result
 
-            wav_fp = io.BytesIO(wav_bytes)
-            wf = wave.open(wav_fp, "rb")
-            channels = wf.getnchannels()
-            rate = wf.getframerate()
-            audio_data = wf.readframes(wf.getnframes())
-            data = np.frombuffer(audio_data, dtype=np.int16)
+            # 'out' is expected to be a float32 array in range [-1,1]
+            data = np.clip(out, -1.0, 1.0)
+            data = (data * 32767.0).astype(np.int16)
 
-            audio_msg = data_to_msg(data, pyaudio.paInt16)
+            # Create and publish full audio message at once
+            audio_msg = array_to_msg(data)
+            #if audio_msg is None:
+            #    self.get_logger().error(f"Format {audio_format} unknown")
+            #    goal_handle.abort()
+            #    self.run_next_goal()
+            #    return TTS.Result()
+
             msg = AudioStamped()
             msg.header.frame_id = self.frame_id
             msg.header.stamp = self.get_clock().now().to_msg()
             msg.audio = audio_msg
-            msg.audio.info.channels = channels
+            # set channels and rate from the source (default to mono/24000 if unknown)
+            msg.audio.info.channels = 1
             msg.audio.info.chunk = get_msg_chunk(audio_msg)
-            msg.audio.info.rate = rate
+            msg.audio.info.rate = rate if rate is not None else 24000
+            self.get_logger().info("publish audio")
+            with self._pub_lock:
+                self.__player_pub.publish(msg)
+                self.get_logger().info("published audio")
+                self.robot_speaks = True #or can be subscribed from topic
 
-            self.__player_pub.publish(msg)
-            goal_handle.publish_feedback(TTS.Feedback(audio=msg))
-            self.robot_speaks = True
+                success = self.wait_for_audio_playback(goal_handle, timeout_sec=30.0)
 
-            success = self.wait_for_audio_playback(goal_handle, timeout_sec=30.0)
+                if not success:
+                    if goal_handle.is_cancel_requested:
+                        goal_handle.canceled()
+                        return TTS.Result()
+                    else:
+                        try:
+                            if goal_handle.is_active:
+                                goal_handle.canceled()
+                        except Exception as e:
+                            self.get_logger().warn(f"Could not abort: {e}")
+                        return TTS.Result()
 
-            if not success:
-                if goal_handle.is_cancel_requested:
-                    goal_handle.canceled()
-                    return TTS.Result()
-                else:
-                    try:
-                        if goal_handle.is_active:
-                            goal_handle.canceled()
-                    except Exception as e:
-                        self.get_logger().warn(f"Could not abort: {e}")
-                    return TTS.Result()
-
-            if goal_handle.is_active:
-                goal_handle.succeed()
-                
-            result = TTS.Result()
-            result.text = text
-            return result
-
-        except Exception as e:
-            self.get_logger().error(f"Exception: {e}")
-            if not goal_handle.is_cancel_requested:
-                try:
-                    goal_handle.abort()
-                except Exception as inner_e:
-                    self.get_logger().warn(f"Failed to abort goal: {inner_e}")
-            result = TTS.Result()
-            result.text = text
-            return result
-               
-    def execute_xtts(self, goal_handle: ServerGoalHandle, text: str, language: str) -> TTS.Result:
-
-        self.get_logger().info("Generating Audio")
-
-        try:
-            if not self.stream:
-                out = self.generate_speech(text, emotion="neutral", parse_emotions=True)
-                wav = torch.tensor(out["wav"]).unsqueeze(0)
-                data = wav.numpy().flatten()
-                data = np.clip(data, -1, 1)
-                data = (data * 32767).astype(np.int16)
-
-
-                # Create and publish full audio message at once
-                audio_msg = data_to_msg(data, pyaudio.paInt16)
-                #if audio_msg is None:
-                #    self.get_logger().error(f"Format {audio_format} unknown")
-                #    goal_handle.abort()
-                #    self.run_next_goal()
-                #    return TTS.Result()
-
-                msg = AudioStamped()
-                msg.header.frame_id = self.frame_id
-                msg.header.stamp = self.get_clock().now().to_msg()
-                msg.audio = audio_msg
-                msg.audio.info.channels = 1
-                msg.audio.info.chunk = get_msg_chunk(audio_msg)
-                msg.audio.info.rate = 24000
-
-                with self._pub_lock:
-                    self.__player_pub.publish(msg)
-                    self.get_logger().info("published audio")
-                    self.robot_speaks = True #or can be subscribed from topic
-
-                    success = self.wait_for_audio_playback(goal_handle, timeout_sec=30.0)
-
-                    if not success:
-                        if goal_handle.is_cancel_requested:
-                            goal_handle.canceled()
-                            return TTS.Result()
-                        else:
-                            try:
-                                if goal_handle.is_active:
-                                    goal_handle.canceled()
-                            except Exception as e:
-                                self.get_logger().warn(f"Could not abort: {e}")
-                            return TTS.Result()
-
-                    if goal_handle.is_active:
-                        goal_handle.succeed()
-                        
-                    result = TTS.Result()
-                    result.text = text
-                    return result
-            else:
-                # streaming mode (keep as-is)
-                chunks = self.tts.synthesizer.tts_model.inference_stream(
-                    text,
-                    language,
-                    self.gpt_cond_latent,
-                    self.speaker_embedding,
-                )
+                if goal_handle.is_active:
+                    goal_handle.succeed()
+                    
+                result = TTS.Result()
+                result.text = text
+                return result
+        
 
         except Exception as e:
             self.get_logger().error(f"Exception: {e}")
