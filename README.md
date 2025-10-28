@@ -21,11 +21,12 @@ Then test by calling the action:
  ros2 action send_goal /say audio_tts_msgs/action/TTS "{'text': 'Hola, soy un robot muy alegre que quiere jugar contigo', 'language': 'es', 'volume': 0.8, 'rate': 1.2}"
 ```
 
-To test with emotion tags:
+To test with emotion tags. NOTE, Sara has adjusted to call expression(surprise), so it is
+easier to merge them with facial expressions. 
 
 
 ```shell
-ros2 action send_goal /say audio_tts_msgs/action/TTS "{'text': '<surprise>Hola, que haces aqui?</surprise><neutral>vamos a tener una clase hoy</neutral>', 'language': 'es', 'volume': 0.9, 'rate': 1.2}"
+ros2 action send_goal /say audio_tts_msgs/action/TTS "{'text': '<expression(surprise)>Hola, que haces aqui?</expression(surprise)><expression(neutral)>vamos a tener una clase hoy</expression(neutral)>', 'language': 'es', 'volume': 0.9, 'rate': 1.2}"
 ```
 
 The output will be publishes on `audio` topic (to check naming). To play it directly, use the [audio_player](https://github.com/EMOROBOCARE/audio_player) package, see the repository on how to set it up. The action monitors the /robot_speaking topic (of type std_msgs/msg/Bool), and only returns success once it is set back to False (the robot has finished playing the audio). Note for these you need to set-up ROS2 multicasting between both computers with CYCLONE (see the audio_player repo). To test it without the audio player, you can manually set it to True with:

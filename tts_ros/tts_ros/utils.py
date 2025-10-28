@@ -101,7 +101,13 @@ def msg_to_array(msg: Audio) -> np.ndarray:
     elif audio_format == pyaudio.paUInt8:
         data = msg.audio_data.uint8_data
     if data is not None:
-        data = np.frombuffer(data, pyaudio_to_np[audio_format])
+        # audio_data fields are lists; convert to numpy array with appropriate dtype
+        try:
+            array = np.array(data, dtype=pyaudio_to_np[audio_format])
+        except Exception:
+            # fallback: attempt frombuffer if it's bytes-like
+            array = np.frombuffer(data, dtype=pyaudio_to_np[audio_format])
+        data = array
 
     return data
 
