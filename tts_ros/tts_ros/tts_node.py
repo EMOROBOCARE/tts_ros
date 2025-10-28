@@ -52,7 +52,6 @@ import tempfile
 import requests
 from io import BytesIO
 
-EMOTION_TAGS = ["fear", "happiness", "neutral", "surprise"]
 import re
 
 # regex to parse tags like: [happy] Hello world
