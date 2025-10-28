@@ -41,7 +41,7 @@ from rclpy.executors import MultiThreadedExecutor
 
 from audio_tts_msgs.msg import AudioStamped
 from audio_tts_msgs.action import TTS
-from tts_ros.utils import array_to_msg, get_msg_chunk
+from tts_ros.utils import array_to_msg, get_msg_chunk, concat_audios_with_silence
 from std_msgs.msg import Bool
 import time
 import numpy as np
@@ -52,12 +52,18 @@ import tempfile
 import requests
 from io import BytesIO
 
-EMOTION_TAGS = ["fear", "happiness", "neutral", "surprised"]
+EMOTION_TAGS = ["fear", "happiness", "neutral", "surprise"]
 import re
 
 # regex to parse tags like: [happy] Hello world
-EMOTION_TAG_RE = re.compile(r"^\s*\[([A-Za-z]+)\]\s*(.*)", re.IGNORECASE)
+EMOTION_TAG_RE =  re.compile(r"<expression\((\w+)\)>(.*?)</expression>", re.IGNORECASE | re.DOTALL)
 
+EXPRESSION_MAP = {
+    "happy": "happiness",
+    "fear": "fear",
+    "neutral": "neutral",
+    "surprised": "surprise"
+}
 
 class TtsNode(Node):
 
@@ -113,7 +119,7 @@ class TtsNode(Node):
             "temperature": temperature,
             "language": language
         }
-        url = "http://localhost:80/tts/read"
+        url = "http://10.147.19.11/tts/read"
         t0 = time.time()
         # Call local TTS HTTP server (/tts/read) with a sensible timeout
         try:
@@ -166,8 +172,18 @@ class TtsNode(Node):
         return audio_array, sample_rate
         
 
-    def parse_emotions(self, text: str):
-        return EMOTION_TAG_RE.findall(text)
+    def parse_expressions(self, text: str):
+        """
+        Returns a list of tuples: (tts_emotion, segment_text)
+        """
+        segments = []
+        for match in EMOTION_TAG_RE.finditer(text):
+            emotion_tag = match.group(1).lower()
+            segment_text = match.group(2).strip()
+            tts_emotion = EXPRESSION_MAP.get(emotion_tag, "neutral")
+            segments.append((tts_emotion, segment_text))
+        return segments
+
 
     def wait_for_audio_playback(self, goal_handle, timeout_sec=10.0) -> bool:
         self.get_logger().info("waiting for audio to finish")
@@ -229,22 +245,19 @@ class TtsNode(Node):
     def execute_xtts(self, goal_handle: ServerGoalHandle, text: str, language: str, temperature: float) -> TTS.Result:
 
         self.get_logger().info("Generating Audio")
-        emotion_map = {
-            "happy": "happiness",
-            "neutral": "neutral", 
-            "surprised": "surprise"
-        }
 
         try:
-            match = EMOTION_TAG_RE.match(text.strip())
-            if match:
-                emotion = match.group(1).lower()
-                emotion = emotion_map.get(emotion, emotion)  # normalize
-                inner_text = match.group(2).strip()
-                self.get_logger().info(f"Parsed emotion: {emotion}, text: {inner_text}")
-                out, rate = self.generate_speech(inner_text, emotion=str(emotion), language=language, temperature=temperature)
+            segments = self.parse_expressions(text)
+            audios = []
+
+            if segments:
+                for emotion, segment_text in segments:
+                    out, rate = self.generate_speech(segment_text, emotion=emotion, language=language, temperature=temperature)
+                    audios.append(out)
+                out = concat_audios_with_silence(audios, rate)
             else:
-                out, rate = self.generate_speech(text, emotion="neutral", language=language, temperature=temperature)
+                # If no expression tags, default to happy/happiness
+                out, rate = self.generate_speech(text, emotion="happiness", language=language, temperature=temperature)
 
             if out is None:
                 self.get_logger().error("No audio returned from TTS server")
