@@ -41,7 +41,7 @@ from rclpy.executors import MultiThreadedExecutor
 
 from audio_tts_msgs.msg import AudioStamped
 from audio_tts_msgs.action import TTS
-from tts_ros.utils import array_to_msg, get_msg_chunk, concat_audios_with_silence
+from tts_ros.utils import array_to_msg, get_msg_chunk
 from std_msgs.msg import Bool
 import time
 import numpy as np
@@ -51,18 +51,8 @@ import io
 import tempfile
 import requests
 from io import BytesIO
-
+from audio_tts_msgs.srv import SetVoice
 import re
-
-# regex to parse tags like: [happy] Hello world
-EMOTION_TAG_RE =  re.compile(r"<expression\((\w+)\)>(.*?)</expression>", re.IGNORECASE | re.DOTALL)
-
-EXPRESSION_MAP = {
-    "happy": "happiness",
-    "fear": "fear",
-    "neutral": "neutral",
-    "surprised": "surprise"
-}
 
 class TtsNode(Node):
 
@@ -92,6 +82,8 @@ class TtsNode(Node):
         self.__player_pub = self.create_publisher(AudioStamped, "/tts/audio", qos_profile_sensor_data)
         self.voice_detected_sub = self.create_subscription(
             Bool, "/robot_speaking", self.on_robot_speaking, 1)
+        self.create_service(SetVoice, "/tts/change_voice", self.change_voice_callback)
+        self._current_voice = "infantil"
         # Action server setup
         self._action_server = ActionServer(
             self,
@@ -106,8 +98,34 @@ class TtsNode(Node):
 
         self.get_logger().info("TTS node started")
 
+    def change_voice_callback(self, request, response):
+        new_voice = request.voice.strip()
+        if not new_voice:
+            response.success = False
+            response.message = "Empty voice name not allowed"
+            return response
 
-    def generate_speech(self, text, emotion="neutral", language="es", temperature=0.9):
+        try:
+            url = "http://10.147.19.11/tts/change_voice"  # replace 5002 with your TTS HTTP port
+            payload = {"voice": new_voice}
+            r = requests.post(url, json=payload, timeout=3.0)
+            if r.status_code == 200:
+                self._current_voice = new_voice
+                response.success = True
+                response.message = f"Voice changed to '{new_voice}'"
+                self.get_logger().info(response.message)
+            else:
+                response.success = False
+                response.message = f"TTS server returned {r.status_code}: {r.text}"
+                self.get_logger().error(response.message)
+        except Exception as e:
+            response.success = False
+            response.message = f"Failed to change voice: {e}"
+            self.get_logger().error(response.message)
+
+        return response
+
+    def generate_speech(self, text, emotion="neutral", language="es", temperature=0.9, rate=1.0):
         log_str = f"Emotion: {emotion}\t Generated text: {text}\t"
         print(log_str)
         #if emotion not in self.emotion_embeddings:
@@ -116,7 +134,8 @@ class TtsNode(Node):
             "text": text,
             "emotion": emotion,
             "temperature": temperature,
-            "language": language
+            "language": language#,
+            #"rate": rate,
         }
         url = "http://10.147.19.11/tts/read"
         t0 = time.time()
@@ -169,20 +188,6 @@ class TtsNode(Node):
         log_str += f"Inference time: {round(time.time()-t0, 2)}"
         self.get_logger().info(log_str)
         return audio_array, sample_rate
-        
-
-    def parse_expressions(self, text: str):
-        """
-        Returns a list of tuples: (tts_emotion, segment_text)
-        """
-        segments = []
-        for match in EMOTION_TAG_RE.finditer(text):
-            emotion_tag = match.group(1).lower()
-            segment_text = match.group(2).strip()
-            tts_emotion = EXPRESSION_MAP.get(emotion_tag, "neutral")
-            segments.append((tts_emotion, segment_text))
-        return segments
-
 
     def wait_for_audio_playback(self, goal_handle, timeout_sec=10.0) -> bool:
         self.get_logger().info("waiting for audio to finish")
@@ -232,97 +237,102 @@ class TtsNode(Node):
     def execute_callback(self, goal_handle: ServerGoalHandle) -> TTS.Result:
         request: TTS.Goal = goal_handle.request
         text = request.text
-        language = request.language
+        language = request.language or "es"
+        emotion = request.emotion or "neutral"
         temperature = request.temperature
+        rate = request.rate if request.rate > 0.0 else 1.0
 
         if not text.strip():
             goal_handle.succeed()
             return TTS.Result()
 
-        return self.execute_xtts(goal_handle, text, language, temperature)
+        return self.execute_xtts(goal_handle, text, language, emotion, temperature, rate)
 
-    def execute_xtts(self, goal_handle: ServerGoalHandle, text: str, language: str, temperature: float) -> TTS.Result:
+    def execute_xtts(
+        self,
+        goal_handle: ServerGoalHandle,
+        text: str,
+        language: str,
+        emotion: str,
+        temperature: float,
+        rate: float,
+    ) -> TTS.Result:
 
-        self.get_logger().info("Generating Audio")
+        self.get_logger().info(
+            f"Generating audio | emotion={emotion}, temp={temperature}, rate={rate}"
+        )
 
         try:
-            segments = self.parse_expressions(text)
-            audios = []
+            # Call TTS backend
+            out, sample_rate = self.generate_speech(
+                text=text,
+                emotion=emotion,
+                language=language,
+                temperature=temperature,
+                rate=rate,
+            )
 
-            if segments:
-                for emotion, segment_text in segments:
-                    out, rate = self.generate_speech(segment_text, emotion=emotion, language=language, temperature=temperature)
-                    audios.append(out)
-                out = concat_audios_with_silence(audios, rate)
-            else:
-                # If no expression tags, default to happy/happiness
-                out, rate = self.generate_speech(text, emotion="happiness", language=language, temperature=temperature)
-
-            if out is None:
+            if out is None or sample_rate is None:
                 self.get_logger().error("No audio returned from TTS server")
-                try:
+                if goal_handle.is_active:
                     goal_handle.abort()
-                except Exception:
-                    pass
                 result = TTS.Result()
                 result.text = text
                 return result
 
-            # 'out' is expected to be a float32 array in range [-1,1]
+            # Convert float32 [-1,1] to int16 PCM
             data = np.clip(out, -1.0, 1.0)
             data = (data * 32767.0).astype(np.int16)
 
-            # Create and publish full audio message at once
             audio_msg = array_to_msg(data)
-            #if audio_msg is None:
-            #    self.get_logger().error(f"Format {audio_format} unknown")
-            #    goal_handle.abort()
-            #    self.run_next_goal()
-            #    return TTS.Result()
+            if audio_msg is None:
+                self.get_logger().error("Failed to convert audio array to ROS message")
+                if goal_handle.is_active:
+                    goal_handle.abort()
+                return TTS.Result()
 
             msg = AudioStamped()
             msg.header.frame_id = self.frame_id
             msg.header.stamp = self.get_clock().now().to_msg()
             msg.audio = audio_msg
-            # set channels and rate from the source (default to mono/24000 if unknown)
             msg.audio.info.channels = 1
             msg.audio.info.chunk = get_msg_chunk(audio_msg)
-            msg.audio.info.rate = rate if rate is not None else 24000
-            self.get_logger().info("publish audio")
+            msg.audio.info.rate = sample_rate
+
+            # Publish audio
             with self._pub_lock:
                 self.__player_pub.publish(msg)
-                self.get_logger().info("published audio")
-                self.robot_speaks = True #or can be subscribed from topic
+                self.robot_speaks = True
 
-                success = self.wait_for_audio_playback(goal_handle, timeout_sec=30.0)
+                # Publish feedback
+                feedback = TTS.Feedback()
+                feedback.audio = msg
+                goal_handle.publish_feedback(feedback)
 
-                if not success:
-                    if goal_handle.is_cancel_requested:
-                        goal_handle.canceled()
-                        return TTS.Result()
-                    else:
-                        try:
-                            if goal_handle.is_active:
-                                goal_handle.canceled()
-                        except Exception as e:
-                            self.get_logger().warn(f"Could not abort: {e}")
-                        return TTS.Result()
+            # Wait until playback finishes or is canceled
+            success = self.wait_for_audio_playback(goal_handle, timeout_sec=30.0)
 
-                if goal_handle.is_active:
-                    goal_handle.succeed()
-                    
-                result = TTS.Result()
-                result.text = text
-                return result
-        
+            if not success:
+                if goal_handle.is_cancel_requested:
+                    goal_handle.canceled()
+                elif goal_handle.is_active:
+                    goal_handle.abort()
+                return TTS.Result()
+
+            if goal_handle.is_active:
+                goal_handle.succeed()
+
+            result = TTS.Result()
+            result.text = text
+            return result
 
         except Exception as e:
-            self.get_logger().error(f"Exception: {e}")
-            if not goal_handle.is_cancel_requested:
+            self.get_logger().error(f"Exception in execute_xtts: {e}")
+            if goal_handle.is_active and not goal_handle.is_cancel_requested:
                 try:
                     goal_handle.abort()
-                except Exception as inner_e:
-                    self.get_logger().warn(f"Failed to abort goal: {inner_e}")
+                except Exception:
+                    pass
             result = TTS.Result()
             result.text = text
             return result

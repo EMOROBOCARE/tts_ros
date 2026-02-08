@@ -14,44 +14,54 @@ Then execute the TTS ROS2 node, specifying the path of the WAV file. NOTE this i
 
 Note that usually we want to set stream:=false, as this will publish the whole TTS together on the ROS2 topic 'audio'. We can investigate how to publish it progressively. 
 
-Then test by calling the action: 
- 
- 
-```shell
- ros2 action send_goal /say audio_tts_msgs/action/TTS "{'text': 'Hola, soy un robot muy alegre que quiere jugar contigo', 'language': 'es', 'volume': 0.8, 'rate': 1.2}"
+### Using the `/say` Action
+
+The TTS node provides the `/say` action (`audio_tts_msgs/action/TTS`) to synthesize speech.  
+
+**Example usage:**
+
+```bash
+ros2 action send_goal /say audio_tts_msgs/action/TTS \
+"{'text': 'Hola, soy un robot muy alegre que quiere jugar contigo', 'language': 'es', 'emotion': 'happiness', 'rate': 1.2, 'temperature': 0.9}"
 ```
 
-To test with emotion tags. NOTE, Sara has adjusted to call expression(surprise), so it is
-easier to merge them with facial expressions. 
+## Action Fields
 
+- **text** → The text to speak.
+- **language** → Language code (e.g., `es` for Spanish, `en` for English).
+- **emotion** → Emotion for TTS voice. Available emotions:  
+  `neutral`, `happiness`, `sad`, `upset`, `whisper`.
+- **rate** → Speech rate multiplier (default `1.0`).
+- **temperature** → Sampling temperature for voice generation (default `0.9`).
 
-```shell
-ros2 action send_goal /say audio_tts_msgs/action/TTS "{'text': '<expression(surprise)>Hola, que haces aqui?</expression(surprise)><expression(neutral)>vamos a tener una clase hoy</expression(neutral)>', 'language': 'es', 'volume': 0.9, 'rate': 1.2}"
+## Audio Output
+
+The synthesized audio is published on the ROS 2 topic:
+
+- **/tts/audio** (`audio_tts_msgs/msg/AudioStamped`) → The generated audio message.
+
+## Playback Monitoring
+
+The node subscribes to:
+
+- **/robot_speaking** (`std_msgs/msg/Bool`) → `True` while the robot is speaking.
+
+The `/say` action will return success once playback is finished.
+
+## Changing Voice
+
+You can dynamically change the TTS voice using the service:
+
+```bash
+ros2 service call /tts/change_voice audio_tts_msgs/srv/SetVoice "{voice: 'infantil'}"
 ```
 
-The output will be publishes on `audio` topic (to check naming). To play it directly, use the [audio_player](https://github.com/EMOROBOCARE/audio_player) package, see the repository on how to set it up. The action monitors the /robot_speaking topic (of type std_msgs/msg/Bool), and only returns success once it is set back to False (the robot has finished playing the audio). Note for these you need to set-up ROS2 multicasting between both computers with CYCLONE (see the audio_player repo). To test it without the audio player, you can manually set it to True with:
+Options are 'infantil', 'mujer', 'hombre'. 
 
-```shell
-ros2 topic pub /robot_speaking std_msgs/msg/Bool "{data: true}" --once
-```
+## Notes
 
-
-## ROS interfaces
-
-Publishers:
-
-**/tts/audio** of type **audio_tts_msgs/msg/AudioStamped**: publishes the audio stream
-
-Subscription:
-
-**/robot_speaking** of type **std_msgs/msg/Bool**: sets to True when the audio starts playing, and back to False when it finishes playing. 
-
-Actions:
-
-**/say** of type audio_tts_msgs/action/TTS: gets as input the text, language, volume and rate to use, and returns success when audio has finished
-playig. Note right now in our current models we are not managing volume and rate (WIP). 
-
-
+- The node requires a running TTS HTTP server (`/tts/read`) to generate speech.
+- The `/say` action handles multiple simultaneous requests in order using a queue.
 
 ----
 This repositiory integrates the Python [TTS](https://pypi.org/project/TTS/) (Text-to-Speech) package into ROS 2 using [audio_common](https://github.com/mgonzs13/audio_common) [4.0.5](https://github.com/mgonzs13/audio_common/releases/tag/4.0.5).
