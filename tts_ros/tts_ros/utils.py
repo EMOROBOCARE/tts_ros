@@ -134,3 +134,31 @@ def get_msg_chunk(msg: Audio) -> int:
             return int(len(data) / 2)
     else:
         return -1
+
+
+import numpy as np
+
+def concat_audios_with_silence(audio_list, sample_rate):
+    """
+    Concatenate a list of audio numpy arrays with random silence between 0.75s and 2s.
+
+    Args:
+        audio_list (list[np.ndarray]): List of audio arrays (float32, mono).
+        sample_rate (int): Sampling rate (Hz).
+
+    Returns:
+        np.ndarray: Concatenated audio array with silences.
+    """
+    if not audio_list:
+        return np.array([], dtype=np.float32)
+
+    output = [audio_list[0]]
+
+    for audio in audio_list[1:]:
+        silence_duration = np.random.uniform(0.5, 1.5)  # seconds
+        silence_samples = int(silence_duration * sample_rate)
+        silence = np.zeros(silence_samples, dtype=np.float32)
+
+        output.extend([silence, audio])
+
+    return np.concatenate(output, axis=0)
