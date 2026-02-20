@@ -1,93 +1,90 @@
 # tts_ros
 
+This repositiory integrates the Python [TTS](https://pypi.org/project/TTS/) (Text-to-Speech) package into ROS 2 using [audio_common](https://github.com/mgonzs13/audio_common) [4.0.5](https://github.com/mgonzs13/audio_common/releases/tag/4.0.5).
 
+<div align="center">
 
-## Getting started
+[![License: MIT](https://img.shields.io/badge/GitHub-MIT-informational)](https://opensource.org/license/mit) [![GitHub release](https://img.shields.io/github/release/mgonzs13/tts_ros.svg)](https://github.com/mgonzs13/tts_ros/releases) [![Code Size](https://img.shields.io/github/languages/code-size/mgonzs13/tts_ros.svg?branch=main)](https://github.com/mgonzs13/tts_ros?branch=main) [![Last Commit](https://img.shields.io/github/last-commit/mgonzs13/tts_ros.svg)](https://github.com/mgonzs13/tts_ros/commits/main) [![GitHub issues](https://img.shields.io/github/issues/mgonzs13/tts_ros)](https://github.com/mgonzs13/tts_ros/issues) [![GitHub pull requests](https://img.shields.io/github/issues-pr/mgonzs13/tts_ros)](https://github.com/mgonzs13/tts_ros/pulls) [![Contributors](https://img.shields.io/github/contributors/mgonzs13/tts_ros.svg)](https://github.com/mgonzs13/tts_ros/graphs/contributors) [![Python Formatter Check](https://github.com/mgonzs13/tts_ros/actions/workflows/python-formatter.yml/badge.svg?branch=main)](https://github.com/mgonzs13/tts_ros/actions/workflows/python-formatter.yml?branch=main)
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+| ROS 2 Distro |                         Branch                          |                                                                                                     Build status                                                                                                     |                                                               Docker Image                                                               | Documentation                                                                                                                                              |
+| :----------: | :-----------------------------------------------------: | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :--------------------------------------------------------------------------------------------------------------------------------------: | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|  **Humble**  | [`main`](https://github.com/mgonzs13/tts_ros/tree/main) |  [![Humble Build](https://github.com/mgonzs13/tts_ros/actions/workflows/humble-docker-build.yml/badge.svg?branch=main)](https://github.com/mgonzs13/tts_ros/actions/workflows/humble-docker-build.yml?branch=main)   |  [![Docker Image](https://img.shields.io/badge/Docker%20Image%20-humble-blue)](https://hub.docker.com/r/mgons/tts_ros/tags?name=humble)  | [![Doxygen Deployment](https://github.com/mgonzs13/tts_ros/actions/workflows/doxygen-deployment.yml/badge.svg)](https://mgonzs13.github.io/tts_ros/latest) |
+|   **Iron**   | [`main`](https://github.com/mgonzs13/tts_ros/tree/main) |     [![Iron Build](https://github.com/mgonzs13/tts_ros/actions/workflows/iron-docker-build.yml/badge.svg?branch=main)](https://github.com/mgonzs13/tts_ros/actions/workflows/iron-docker-build.yml?branch=main)      |    [![Docker Image](https://img.shields.io/badge/Docker%20Image%20-iron-blue)](https://hub.docker.com/r/mgons/tts_ros/tags?name=iron)    | [![Doxygen Deployment](https://github.com/mgonzs13/tts_ros/actions/workflows/doxygen-deployment.yml/badge.svg)](https://mgonzs13.github.io/tts_ros/latest) |
+|  **Jazzy**   | [`main`](https://github.com/mgonzs13/tts_ros/tree/main) |    [![Jazzy Build](https://github.com/mgonzs13/tts_ros/actions/workflows/jazzy-docker-build.yml/badge.svg?branch=main)](https://github.com/mgonzs13/tts_ros/actions/workflows/jazzy-docker-build.yml?branch=main)    |   [![Docker Image](https://img.shields.io/badge/Docker%20Image%20-jazzy-blue)](https://hub.docker.com/r/mgons/tts_ros/tags?name=jazzy)   | [![Doxygen Deployment](https://github.com/mgonzs13/tts_ros/actions/workflows/doxygen-deployment.yml/badge.svg)](https://mgonzs13.github.io/tts_ros/latest) |
+| **Rolling**  | [`main`](https://github.com/mgonzs13/tts_ros/tree/main) | [![Rolling Build](https://github.com/mgonzs13/tts_ros/actions/workflows/rolling-docker-build.yml/badge.svg?branch=main)](https://github.com/mgonzs13/tts_ros/actions/workflows/rolling-docker-build.yml?branch=main) | [![Docker Image](https://img.shields.io/badge/Docker%20Image%20-rolling-blue)](https://hub.docker.com/r/mgons/tts_ros/tags?name=rolling) | [![Doxygen Deployment](https://github.com/mgonzs13/tts_ros/actions/workflows/doxygen-deployment.yml/badge.svg)](https://mgonzs13.github.io/tts_ros/latest) |
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+</div>
 
-## Add your files
+## Table of Contents
 
-* [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
-
-```
-cd existing_repo
-git remote add origin https://gitlab.iiia.csic.es/socialminds/emorobcare/tts_ros.git
-git branch -M main
-git push -uf origin main
-```
-
-## Integrate with your tools
-
-* [Set up project integrations](https://gitlab.iiia.csic.es/socialminds/emorobcare/tts_ros/-/settings/integrations)
-
-## Collaborate with your team
-
-* [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
-
-## Test and Deploy
-
-Use the built-in continuous integration in GitLab.
-
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
-
-***
-
-# Editing this README
-
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
-
-## Suggestions for a good README
-
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
-
-## Name
-Choose a self-explaining name for your project.
-
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
-
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
-
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+1. [Installation](#installation)
+2. [Docker](#docker)
+3. [Usage](#usage)
 
 ## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+
+```shell
+cd ~/ros2_ws/src
+git clone https://github.com/mgonzs13/audio_common.git
+git clone https://github.com/mgonzs13/tts_ros.git
+pip3 install -r tts_ros/requirements.txt
+cd ~/ros2_ws
+rosdep install --from-paths src --ignore-src -r -y
+colcon build
+```
+
+## Docker
+
+You can build the tts_ros docker:
+
+```shell
+docker build -t tts_ros .
+```
+
+Then, you can run the docker container:
+
+```shell
+docker run -it --rm --device /dev/snd tts_ros
+```
 
 ## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+To use this tool you have to run the tts_node. It has the following parameters:
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+- `chunk`: Size of audio chunks to be sent to the audio player.
+- `frame_id`: Frame of for the tts.
+- `model`: The tts model. You can check the available models with `tts --list_models`.
+- `model_path`: Path to a local model file.
+- `config_path`: Path to a config file.
+- `vocoder_path`: Path to a vocoder model file.
+- `vocoder_config_path`: Path to a config file.
+- `device`: The device to run the model same as in torch.
+- `speaker_wav`: The wav file to perform voice cloning.
+- `speaker`: Which speaker voice to use for multi-speaker models. Check with `tts --model_name <model> --list_language_idx`.
+- `stream`: Whether to stream the audio data.
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+### Parameters Format
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+```shell
+ros2 run tts_ros tts_node --ros-args -p chunk:=4096 -p frame_id:="your-frame" -p model:="your-model" -p device:="cpu/cuda" -p speaker_wav:="/path/to/wav/file" -p stream:=False
+```
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+## Demo
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+```shell
+ros2 launch tts_bringup tts.launch.py device:="cuda"
+```
 
-## License
-For open source projects, say how it is licensed.
+```shell
+ros2 action send_goal /say audio_common_msgs/action/TTS "{'text': 'Hello World'}"
+```
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+## Streaming Demo
+
+```shell
+ros2 launch tts_bringup tts.launch.py stream:=True model:="tts_models/multilingual/multi-dataset/xtts_v2" speaker_wav:="/home/miguel/Downloads/question_1.wav"  device:="cuda"
+```
+
+```shell
+ros2 action send_goal /say audio_common_msgs/action/TTS "{'text': 'Hello World, How are you? Can you hear me? What is your favorite color? Do you know the Robot Operating System?'}"
+```
