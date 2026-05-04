@@ -28,7 +28,8 @@ from io import BytesIO
 from audio_tts_msgs.srv import SetVoice
 from rcl_interfaces.msg import ParameterEvent, SetParametersResult 
 import re
-
+from std_srvs.srv import Trigger
+import os
 
 class TtsNode(Node):
     def __init__(self) -> None:
@@ -38,7 +39,7 @@ class TtsNode(Node):
             "",
             [
                 ("frame_id", ""),
-                ("tts_ip", "10.147.19.11"), 
+                ("tts_ip", os.getenv("TTS_IP", "10.147.19.11")),
             ],
         )
 
@@ -53,7 +54,7 @@ class TtsNode(Node):
         self.robot_speaks = False
         self.frame_id = self.get_parameter("frame_id").get_parameter_value().string_value
         self.stop_audio_client = self.create_client(Trigger, "/stop_audio_playback")
-
+        self.create_service(Trigger, "/tts/get_voice", self.get_voice_callback)
         self._goal_queue = collections.deque()
         self._goal_queue_lock = threading.Lock()
         self._current_goal = None
@@ -105,6 +106,11 @@ class TtsNode(Node):
         return f"http://{self._tts_ip}"
 
     # ------------------------------------------------------------------
+    def get_voice_callback(self, request, response):
+        response.success = True
+        response.message = self._current_voice
+        return response
+    
     def change_voice_callback(self, request, response):
         new_voice = request.voice.strip()
         if not new_voice:
