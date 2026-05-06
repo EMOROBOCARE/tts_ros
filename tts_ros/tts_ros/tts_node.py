@@ -39,7 +39,7 @@ class TtsNode(Node):
             "",
             [
                 ("frame_id", ""),
-                ("tts_ip", os.getenv("TTS_IP", "10.147.19.11")),
+                ("tts_ip", os.getenv("TTS_IP", "10.147.1.1")),
             ],
         )
 
@@ -49,7 +49,6 @@ class TtsNode(Node):
         self.get_logger().info(f"TTS backend IP: {self._tts_ip}")
 
         # Register runtime parameter change callback
-        self.add_on_set_parameters_callback(self._on_set_parameters_callback)
 
         self.robot_speaks = False
         self.frame_id = self.get_parameter("frame_id").get_parameter_value().string_value
@@ -64,11 +63,12 @@ class TtsNode(Node):
         self.__player_pub = self.create_publisher(
             AudioStamped, "/tts/audio", qos_profile_sensor_data
         )
+        self.declare_parameter("current_voice", "infantil")
         self.voice_detected_sub = self.create_subscription(
             Bool, "/robot_speaking", self.on_robot_speaking, 1
         )
         self.create_service(SetVoice, "/tts/change_voice", self.change_voice_callback)
-        self._current_voice = "infantil"
+        self._current_voice = self.get_parameter("current_voice").value
 
         self._action_server = ActionServer(
             self,
@@ -81,23 +81,6 @@ class TtsNode(Node):
             callback_group=ReentrantCallbackGroup(),
         )
         self.get_logger().info("TTS node started")
-
-    # ------------------------------------------------------------------
-    # Parameter change handler
-    # ------------------------------------------------------------------
-    def _on_set_parameters_callback(self, params):
-        result = SetParametersResult(successful=True)
-        for param in params:
-            if param.name == "tts_ip":
-                new_ip = param.value.strip()
-                # Basic sanity check — reject empty strings
-                if not new_ip:
-                    result.successful = False
-                    result.reason = "tts_ip cannot be empty"
-                    return result
-                self._tts_ip = new_ip
-                self.get_logger().info(f"TTS backend IP updated to: {self._tts_ip}")
-        return result
 
     # ------------------------------------------------------------------
     # Helper: build base URL from current IP
@@ -123,6 +106,13 @@ class TtsNode(Node):
             r = requests.post(url, json=payload, timeout=3.0)
             if r.status_code == 200:
                 self._current_voice = new_voice
+                self.set_parameters([
+                    rclpy.parameter.Parameter(
+                        "current_voice",
+                        rclpy.Parameter.Type.STRING,
+                        new_voice
+                    )
+                ])
                 response.success = True
                 response.message = f"Voice changed to '{new_voice}'"
                 self.get_logger().info(response.message)
